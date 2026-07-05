@@ -51,7 +51,7 @@ def main():
     # -------------------------------
     # SPLIT INTO 25K FILES
     # -------------------------------
-    MAX_LINES = 25000
+    MAX_LINES = 5000
 
     chunks = [
         sorted_prefixes[i:i + MAX_LINES]
