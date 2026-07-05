@@ -24,7 +24,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run generator
-        run: python generate.py
+        run: python generate_cidr_list.py
 
       - name: Commit results
         run: |
