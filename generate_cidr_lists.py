@@ -1,9 +1,9 @@
+import ipaddress
 import requests
 import os
-import ipaddress
+
 
 ASN_FILE = "asn.txt"
-OUTPUT_FILE = "output/cidr.txt"
 
 
 def get_prefixes(asn):
@@ -23,17 +23,14 @@ def cidr_key(cidr):
     try:
         return ipaddress.IPv4Network(cidr.strip(), strict=False)
     except Exception:
-        # fallback so bad data never breaks the pipeline
         return ipaddress.IPv4Network("0.0.0.0/0")
 
 
 def main():
     all_prefixes = set()
 
-    # ensure output folder exists
     os.makedirs("output", exist_ok=True)
 
-    # read ASN list safely
     with open(ASN_FILE, "r") as f:
         asns = [
             line.strip()
@@ -49,15 +46,28 @@ def main():
         except Exception as e:
             print(f"Failed {asn}: {e}")
 
-    # IPv4-aware sorting
     sorted_prefixes = sorted(all_prefixes, key=cidr_key)
 
-    # write output
-    with open(OUTPUT_FILE, "w") as f:
-        for p in sorted_prefixes:
-            f.write(p + "\n")
+    # -------------------------------
+    # SPLIT INTO 25K FILES
+    # -------------------------------
+    MAX_LINES = 25000
 
-    print(f"Done. Total IPv4 CIDRs: {len(sorted_prefixes)}")
+    chunks = [
+        sorted_prefixes[i:i + MAX_LINES]
+        for i in range(0, len(sorted_prefixes), MAX_LINES)
+    ]
+
+    for idx, chunk in enumerate(chunks, start=1):
+        out_file = f"output/cidr_lists_{idx}.txt"
+
+        with open(out_file, "w") as f:
+            for cidr in chunk:
+                f.write(cidr + "\n")
+
+        print(f"Wrote {out_file} with {len(chunk)} entries")
+
+    print(f"Done. Total CIDRs: {len(sorted_prefixes)}")
 
 
 if __name__ == "__main__":
