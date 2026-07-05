@@ -1,4 +1,7 @@
-name: Build Cloud IPv4 Feed
+name: Build IPv4 Cloud ASN CIDR List
+
+permissions:
+  contents: write
 
 on:
   push:
@@ -29,7 +32,12 @@ jobs:
       - name: Commit results
         run: |
           git config user.name "github-actions"
-          git config user.email "actions@github.com"
+          git config user.email "github-actions@github.com"
+
           git add output/cidr.txt
-          git commit -m "Update cloud IPv4 feed" || echo "No changes"
+
+          # Only commit if there are changes
+          git diff --cached --quiet && echo "No changes" && exit 0
+
+          git commit -m "Update cloud IPv4 feed"
           git push
