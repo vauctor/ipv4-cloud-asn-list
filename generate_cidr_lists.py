@@ -71,7 +71,7 @@ def main():
     ]
 
     for idx, chunk in enumerate(chunks, start=1):
-        out_file = f"output/cidr_lists_{idx}.txt"
+        out_file = f"output/cidr_list_{idx}.txt"
 
         with open(out_file, "w") as f:
             for cidr in chunk:
