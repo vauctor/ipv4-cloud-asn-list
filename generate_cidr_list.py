@@ -1,7 +1,7 @@
 import requests
 
 ASN_FILE = "asn.txt"
-OUTPUT_FILE = "output/ipv4_cloud_asn_list.txt"
+OUTPUT_FILE = "output/cidr.txt"
 
 def get_prefixes(asn):
     url = f"https://asn.ipinfo.app/api/text/list/{asn}"
