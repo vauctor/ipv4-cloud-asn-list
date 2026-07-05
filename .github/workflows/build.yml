@@ -1,0 +1,33 @@
+name: Build Cloud IPv4 Feed
+
+on:
+  schedule:
+    - cron: "0 3 * * *"   # daily at 3AM UTC
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run generator
+        run: python generate.py
+
+      - name: Commit results
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add output/cloud_ipv4.txt
+          git commit -m "Update cloud IPv4 feed" || echo "No changes"
+          git push
