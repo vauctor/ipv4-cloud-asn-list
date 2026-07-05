@@ -1,9 +1,11 @@
 name: Build Cloud IPv4 Feed
 
 on:
-  schedule:
-    - cron: "0 3 * * *"   # daily at 3AM UTC
+  push:
+    branches: [ main ]
   workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * *"
 
 jobs:
   build:
