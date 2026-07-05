@@ -1,4 +1,5 @@
 import requests
+import os
 
 ASN_FILE = "asn.txt"
 OUTPUT_FILE = "output/cidr.txt"
@@ -18,6 +19,7 @@ def get_prefixes(asn):
 
 def main():
     all_prefixes = set()
+    os.makedirs("output", exist_ok=True)
 
     with open(ASN_FILE, "r") as f:
         asns = [line.strip() for line in f if line.strip()]
