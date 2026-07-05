@@ -2,7 +2,6 @@ import ipaddress
 import requests
 import os
 
-
 ASN_FILE = "asn.txt"
 
 
@@ -13,7 +12,6 @@ def get_prefixes(asn):
 
     lines = r.text.splitlines()
 
-    # IPv4 only filter
     ipv4 = [x.strip() for x in lines if x and ":" not in x]
 
     return ipv4
@@ -46,12 +44,26 @@ def main():
         except Exception as e:
             print(f"Failed {asn}: {e}")
 
+    # -------------------------
+    # SORT ALL CIDRS
+    # -------------------------
     sorted_prefixes = sorted(all_prefixes, key=cidr_key)
 
-    # -------------------------------
-    # SPLIT INTO 25K FILES
-    # -------------------------------
-    MAX_LINES = 5000
+    # -------------------------
+    # WRITE MASTER FILE
+    # -------------------------
+    master_file = "output/all_cidr_list.txt"
+
+    with open(master_file, "w") as f:
+        for cidr in sorted_prefixes:
+            f.write(cidr + "\n")
+
+    print(f"Wrote MASTER file with {len(sorted_prefixes)} entries")
+
+    # -------------------------
+    # SPLIT INTO CHUNKS
+    # -------------------------
+    MAX_LINES = 25000
 
     chunks = [
         sorted_prefixes[i:i + MAX_LINES]
@@ -67,7 +79,7 @@ def main():
 
         print(f"Wrote {out_file} with {len(chunk)} entries")
 
-    print(f"Done. Total CIDRs: {len(sorted_prefixes)}")
+    print("Done.")
 
 
 if __name__ == "__main__":
