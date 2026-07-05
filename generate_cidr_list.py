@@ -1,8 +1,10 @@
 import requests
 import os
+import ipaddress
 
 ASN_FILE = "asn.txt"
 OUTPUT_FILE = "output/cidr.txt"
+
 
 def get_prefixes(asn):
     url = f"https://asn.ipinfo.app/api/text/list/{asn}"
@@ -17,12 +19,27 @@ def get_prefixes(asn):
     return ipv4
 
 
+def cidr_key(cidr):
+    try:
+        return ipaddress.IPv4Network(cidr.strip(), strict=False)
+    except Exception:
+        # fallback so bad data never breaks the pipeline
+        return ipaddress.IPv4Network("0.0.0.0/0")
+
+
 def main():
     all_prefixes = set()
+
+    # ensure output folder exists
     os.makedirs("output", exist_ok=True)
 
+    # read ASN list safely
     with open(ASN_FILE, "r") as f:
-        asns = [line.strip() for line in f if line.strip()]
+        asns = [
+            line.strip()
+            for line in f
+            if line.strip() and not line.startswith("#")
+        ]
 
     for asn in asns:
         print(f"Processing {asn}")
@@ -32,8 +49,10 @@ def main():
         except Exception as e:
             print(f"Failed {asn}: {e}")
 
-    sorted_prefixes = sorted(all_prefixes)
+    # IPv4-aware sorting
+    sorted_prefixes = sorted(all_prefixes, key=cidr_key)
 
+    # write output
     with open(OUTPUT_FILE, "w") as f:
         for p in sorted_prefixes:
             f.write(p + "\n")
