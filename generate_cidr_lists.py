@@ -24,7 +24,7 @@ MAX_LINES = 5000
 
 
 # -------------------------
-# GeoIP Database
+# GeoLite2 Database
 # -------------------------
 
 reader = geoip2.database.Reader(
@@ -34,7 +34,7 @@ reader = geoip2.database.Reader(
 
 def get_country(ip):
     """
-    Lookup country using local GeoLite2 database
+    Lookup IP country locally
     """
 
     try:
@@ -50,26 +50,49 @@ def get_country(ip):
 
 
 # -------------------------
-# ASN Prefix Lookup
+# RIPEstat ASN Prefix Lookup
 # -------------------------
 
 def get_prefixes(asn):
+    """
+    Get announced IPv4 prefixes from RIPEstat
+    """
 
-    url = f"https://asn.ipinfo.app/api/text/list/{asn}"
+    url = (
+        "https://stat.ripe.net/data/"
+        "announced-prefixes/data.json?"
+        f"resource={asn}"
+    )
+
 
     r = requests.get(
         url,
-        timeout=20
+        timeout=30
     )
 
     r.raise_for_status()
 
-    return [
-        x.strip()
-        for x in r.text.splitlines()
-        if x.strip()
-        and ":" not in x
-    ]
+
+    data = r.json()
+
+
+    prefixes = []
+
+
+    for item in data["data"]["prefixes"]:
+
+        prefix = item["prefix"]
+
+
+        # IPv4 only
+        if ":" not in prefix:
+
+            prefixes.append(
+                prefix
+            )
+
+
+    return prefixes
 
 
 
@@ -87,7 +110,7 @@ def cidr_key(cidr):
 
 
 # -------------------------
-# Pick IPs to Test
+# Sample IPs in CIDR
 # -------------------------
 
 def sample_ips(cidr):
@@ -109,10 +132,9 @@ def sample_ips(cidr):
         ]
 
 
-    # Larger ranges:
-    # first / middle / last
-
+    # Large ranges
     return [
+
         str(network.network_address),
 
         str(
@@ -121,23 +143,27 @@ def sample_ips(cidr):
         ),
 
         str(network.broadcast_address)
+
     ]
 
 
 
 # -------------------------
-# Write 5000 line chunks
+# Write split files
 # -------------------------
 
 def write_chunks(prefixes):
 
     chunks = [
+
         prefixes[i:i + MAX_LINES]
+
         for i in range(
             0,
             len(prefixes),
             MAX_LINES
         )
+
     ]
 
 
@@ -145,6 +171,7 @@ def write_chunks(prefixes):
         chunks,
         start=1
     ):
+
 
         filename = os.path.join(
             OUTPUT_DIR,
@@ -157,8 +184,12 @@ def write_chunks(prefixes):
             "w"
         ) as f:
 
+
             for cidr in chunk:
-                f.write(cidr + "\n")
+
+                f.write(
+                    cidr + "\n"
+                )
 
 
         print(
@@ -173,6 +204,7 @@ def write_chunks(prefixes):
 # -------------------------
 
 def main():
+
 
     os.makedirs(
         OUTPUT_DIR,
@@ -189,11 +221,17 @@ def main():
         "r"
     ) as f:
 
+
         asns = [
+
             line.strip()
+
             for line in f
+
             if line.strip()
+
             and not line.startswith("#")
+
         ]
 
 
@@ -202,14 +240,17 @@ def main():
     )
 
 
+
     #
-    # Collect CIDRs
+    # Get CIDRs
     #
 
     all_prefixes = set()
 
 
+
     for asn in asns:
+
 
         print(
             f"\nProcessing {asn}"
@@ -218,16 +259,24 @@ def main():
 
         try:
 
-            prefixes = get_prefixes(asn)
 
-            print(
-                f"Found {len(prefixes)} IPv4 CIDRs"
+            prefixes = get_prefixes(
+                asn
             )
 
-            all_prefixes.update(prefixes)
+
+            print(
+                f"Found {len(prefixes)} IPv4 prefixes"
+            )
+
+
+            all_prefixes.update(
+                prefixes
+            )
 
 
         except Exception as e:
+
 
             print(
                 f"{asn} failed: {e}"
@@ -236,7 +285,7 @@ def main():
 
 
     #
-    # Sort
+    # Sort CIDRs
     #
 
     sorted_prefixes = sorted(
@@ -247,7 +296,7 @@ def main():
 
 
     #
-    # Save all CIDRs
+    # Write all CIDRs
     #
 
     with open(
@@ -255,8 +304,12 @@ def main():
         "w"
     ) as f:
 
+
         for cidr in sorted_prefixes:
-            f.write(cidr + "\n")
+
+            f.write(
+                cidr + "\n"
+            )
 
 
     print()
@@ -272,21 +325,19 @@ def main():
 
 
     #
-    # GeoIP Filtering
+    # Geo filtering
     #
 
     us_prefixes = []
 
 
-    print()
     print(
-        "Checking GeoLite2 locations..."
+        "\nChecking GeoLite2 locations...\n"
     )
-    print()
 
 
 
-    for index, cidr in enumerate(
+    for count, cidr in enumerate(
         sorted_prefixes,
         start=1
     ):
@@ -294,14 +345,22 @@ def main():
 
         try:
 
-            samples = sample_ips(cidr)
+
+            samples = sample_ips(
+                cidr
+            )
+
 
             countries = []
 
 
             for ip in samples:
 
-                country = get_country(ip)
+
+                country = get_country(
+                    ip
+                )
+
 
                 countries.append(
                     country
@@ -315,9 +374,11 @@ def main():
 
             if "US" in countries:
 
+
                 us_prefixes.append(
                     cidr
                 )
+
 
                 print(
                     f"KEEP {cidr} {countries}"
@@ -325,6 +386,7 @@ def main():
 
 
             else:
+
 
                 print(
                     f"SKIP {cidr} {countries}"
@@ -334,6 +396,7 @@ def main():
 
         except Exception as e:
 
+
             print(
                 f"{cidr} failed: {e}"
             )
@@ -341,7 +404,7 @@ def main():
 
 
     #
-    # Write US list
+    # Write US file
     #
 
     with open(
@@ -349,14 +412,19 @@ def main():
         "w"
     ) as f:
 
+
         for cidr in us_prefixes:
-            f.write(cidr + "\n")
+
+            f.write(
+                cidr + "\n"
+            )
+
 
 
     print()
 
     print(
-        "=========================="
+        "=============================="
     )
 
     print(
@@ -368,7 +436,7 @@ def main():
     )
 
     print(
-        "=========================="
+        "=============================="
     )
 
 
@@ -392,4 +460,5 @@ def main():
 
 
 if __name__ == "__main__":
+
     main()
