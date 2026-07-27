@@ -20,13 +20,12 @@ US_CIDR_FILE = os.path.join(
 
 MAX_LINES = 5000
 
-# Delay between ipinfo requests
 REQUEST_DELAY = 0.5
 
 
 def get_prefixes(asn):
     """
-    Get IPv4 prefixes announced by ASN
+    Get IPv4 prefixes from ASN
     """
 
     url = f"https://asn.ipinfo.app/api/text/list/{asn}"
@@ -38,36 +37,25 @@ def get_prefixes(asn):
 
     r.raise_for_status()
 
-    lines = r.text.splitlines()
-
     return [
         x.strip()
-        for x in lines
+        for x in r.text.splitlines()
         if x.strip()
         and ":" not in x
     ]
 
 
 def cidr_key(cidr):
-    """
-    Sort CIDRs correctly
-    """
 
-    try:
-        return ipaddress.IPv4Network(
-            cidr.strip(),
-            strict=False
-        )
-
-    except Exception:
-        return ipaddress.IPv4Network(
-            "0.0.0.0/0"
-        )
+    return ipaddress.IPv4Network(
+        cidr,
+        strict=False
+    )
 
 
 def sample_ips(cidr):
     """
-    Select IPs to test inside CIDR
+    Sample IPs inside CIDR
     """
 
     network = ipaddress.IPv4Network(
@@ -77,7 +65,7 @@ def sample_ips(cidr):
 
     total = network.num_addresses
 
-    # Small networks: check all
+
     if total <= 16:
 
         return [
@@ -97,9 +85,6 @@ def sample_ips(cidr):
 
 
 def get_country(ip):
-    """
-    Query ipinfo.io
-    """
 
     url = f"https://ipinfo.io/{ip}"
 
@@ -115,7 +100,7 @@ def get_country(ip):
     return data.get("country")
 
 
-def write_chunks(prefixes, name):
+def write_chunks(prefixes):
 
     chunks = [
         prefixes[i:i + MAX_LINES]
@@ -134,8 +119,9 @@ def write_chunks(prefixes, name):
 
         filename = os.path.join(
             OUTPUT_DIR,
-            f"{name}_{index}.txt"
+            f"US_cidr_list_{index}.txt"
         )
+
 
         with open(
             filename,
@@ -147,7 +133,7 @@ def write_chunks(prefixes, name):
 
 
         print(
-            f"Wrote {filename} "
+            f"Created {filename} "
             f"({len(chunk)} entries)"
         )
 
@@ -161,7 +147,20 @@ def main():
 
 
     #
-    # Load ASNs
+    # Remove old output
+    #
+    for file in [
+        ALL_CIDR_FILE,
+        US_CIDR_FILE
+    ]:
+
+        if os.path.exists(file):
+
+            os.remove(file)
+
+
+    #
+    # Read ASNs
     #
     with open(
         ASN_FILE,
@@ -182,7 +181,7 @@ def main():
 
 
     #
-    # Get CIDRs from ASNs
+    # Pull CIDRs
     #
     all_prefixes = set()
 
@@ -190,7 +189,7 @@ def main():
     for asn in asns:
 
         print(
-            f"Processing {asn}"
+            f"\nProcessing {asn}"
         )
 
         try:
@@ -198,7 +197,7 @@ def main():
             prefixes = get_prefixes(asn)
 
             print(
-                f"  Found {len(prefixes)} IPv4 prefixes"
+                f"Found {len(prefixes)} IPv4 CIDRs"
             )
 
             all_prefixes.update(prefixes)
@@ -212,7 +211,7 @@ def main():
 
 
     #
-    # Sort CIDRs
+    # Sort
     #
     sorted_prefixes = sorted(
         all_prefixes,
@@ -221,7 +220,7 @@ def main():
 
 
     #
-    # Write full CIDR list
+    # Write complete list
     #
     with open(
         ALL_CIDR_FILE,
@@ -233,23 +232,26 @@ def main():
 
 
     print(
-        f"Wrote {ALL_CIDR_FILE}"
-        f" ({len(sorted_prefixes)} entries)"
+        f"\nCreated {ALL_CIDR_FILE}"
+    )
+
+    print(
+        f"Total CIDRs: {len(sorted_prefixes)}"
     )
 
 
     #
-    # Check US location
+    # Geo check
     #
     us_prefixes = []
 
 
     print(
-        "\nChecking CIDRs with ipinfo.io...\n"
+        "\nStarting ipinfo.io checks...\n"
     )
 
 
-    for index, cidr in enumerate(
+    for count, cidr in enumerate(
         sorted_prefixes,
         start=1
     ):
@@ -267,23 +269,28 @@ def main():
 
                 countries.append(country)
 
-                print(
-                    f"{index}/{len(sorted_prefixes)} "
-                    f"{cidr} "
-                    f"{ip} -> {country}"
-                )
-
                 time.sleep(
                     REQUEST_DELAY
                 )
 
 
             #
-            # Require ALL samples to be US
+            # DEBUG
+            #
+            if "223.29.216" in cidr:
+
+                print("\nDEBUG FOUND:")
+                print("CIDR:", cidr)
+                print("Samples:", samples)
+                print("Countries:", countries)
+
+
+            #
+            # Require all samples US
             #
             if all(
-                c == "US"
-                for c in countries
+                country == "US"
+                for country in countries
             ):
 
                 us_prefixes.append(cidr)
@@ -295,7 +302,8 @@ def main():
             else:
 
                 print(
-                    f"SKIP {cidr}"
+                    f"SKIP {cidr} "
+                    f"{countries}"
                 )
 
 
@@ -307,7 +315,7 @@ def main():
 
 
     #
-    # Write US CIDRs
+    # Write US list
     #
     with open(
         US_CIDR_FILE,
@@ -319,22 +327,32 @@ def main():
 
 
     print(
-        f"\nWrote {US_CIDR_FILE}"
-        f" ({len(us_prefixes)} entries)"
+        "\n======================"
+    )
+
+    print(
+        f"Created {US_CIDR_FILE}"
+    )
+
+    print(
+        f"US CIDRs: {len(us_prefixes)}"
+    )
+
+    print(
+        "======================"
     )
 
 
     #
-    # Split US CIDRs
+    # Split files
     #
     write_chunks(
-        us_prefixes,
-        "US_cidr_list"
+        us_prefixes
     )
 
 
     print(
-        "\nDone."
+        "\nComplete."
     )
 
 
