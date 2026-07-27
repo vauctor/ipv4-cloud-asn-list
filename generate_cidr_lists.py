@@ -1,10 +1,12 @@
+import geoip2.database
 import ipaddress
 import requests
-import time
 import os
 
 
 ASN_FILE = "asn.txt"
+
+GEOIP_DB = "GeoLite2-Country.mmdb"
 
 OUTPUT_DIR = "output"
 
@@ -20,13 +22,38 @@ US_CIDR_FILE = os.path.join(
 
 MAX_LINES = 5000
 
-REQUEST_DELAY = 0.5
 
+# -------------------------
+# GeoIP Database
+# -------------------------
+
+reader = geoip2.database.Reader(
+    GEOIP_DB
+)
+
+
+def get_country(ip):
+    """
+    Lookup country using local GeoLite2 database
+    """
+
+    try:
+
+        result = reader.country(ip)
+
+        return result.country.iso_code
+
+    except Exception:
+
+        return None
+
+
+
+# -------------------------
+# ASN Prefix Lookup
+# -------------------------
 
 def get_prefixes(asn):
-    """
-    Get IPv4 prefixes from ASN
-    """
 
     url = f"https://asn.ipinfo.app/api/text/list/{asn}"
 
@@ -45,21 +72,25 @@ def get_prefixes(asn):
     ]
 
 
+
+# -------------------------
+# CIDR Sorting
+# -------------------------
+
 def cidr_key(cidr):
-    """
-    Sort CIDRs properly
-    """
 
     return ipaddress.IPv4Network(
-        cidr.strip(),
+        cidr,
         strict=False
     )
 
 
+
+# -------------------------
+# Pick IPs to Test
+# -------------------------
+
 def sample_ips(cidr):
-    """
-    Pick sample IPs inside CIDR
-    """
 
     network = ipaddress.IPv4Network(
         cidr,
@@ -69,7 +100,7 @@ def sample_ips(cidr):
     total = network.num_addresses
 
 
-    # Small blocks: check all IPs
+    # Small ranges: check all
     if total <= 16:
 
         return [
@@ -78,35 +109,25 @@ def sample_ips(cidr):
         ]
 
 
-    # Larger blocks: sample first/middle/last
+    # Larger ranges:
+    # first / middle / last
+
     return [
         str(network.network_address),
+
         str(
             network.network_address +
             int(total / 2)
         ),
+
         str(network.broadcast_address)
     ]
 
 
-def get_country(ip):
-    """
-    ipinfo.io lookup
-    """
 
-    url = f"https://ipinfo.io/{ip}"
-
-    r = requests.get(
-        url,
-        timeout=20
-    )
-
-    r.raise_for_status()
-
-    data = r.json()
-
-    return data.get("country")
-
+# -------------------------
+# Write 5000 line chunks
+# -------------------------
 
 def write_chunks(prefixes):
 
@@ -146,6 +167,11 @@ def write_chunks(prefixes):
         )
 
 
+
+# -------------------------
+# Main
+# -------------------------
+
 def main():
 
     os.makedirs(
@@ -177,7 +203,7 @@ def main():
 
 
     #
-    # Pull CIDRs
+    # Collect CIDRs
     #
 
     all_prefixes = set()
@@ -208,8 +234,9 @@ def main():
             )
 
 
+
     #
-    # Sort CIDRs
+    # Sort
     #
 
     sorted_prefixes = sorted(
@@ -218,8 +245,9 @@ def main():
     )
 
 
+
     #
-    # Save full list
+    # Save all CIDRs
     #
 
     with open(
@@ -231,8 +259,10 @@ def main():
             f.write(cidr + "\n")
 
 
+    print()
+
     print(
-        f"\nCreated {ALL_CIDR_FILE}"
+        f"Wrote {ALL_CIDR_FILE}"
     )
 
     print(
@@ -240,22 +270,27 @@ def main():
     )
 
 
+
     #
-    # Check countries
+    # GeoIP Filtering
     #
 
     us_prefixes = []
 
 
+    print()
     print(
-        "\nChecking CIDRs with ipinfo.io...\n"
+        "Checking GeoLite2 locations..."
     )
+    print()
+
 
 
     for index, cidr in enumerate(
         sorted_prefixes,
         start=1
     ):
+
 
         try:
 
@@ -268,36 +303,33 @@ def main():
 
                 country = get_country(ip)
 
-                countries.append(country)
-
-                print(
-                    f"{index}/{len(sorted_prefixes)} "
-                    f"{cidr} "
-                    f"{ip} -> {country}"
+                countries.append(
+                    country
                 )
 
-                time.sleep(
-                    REQUEST_DELAY
-                )
 
 
             #
-            # KEEP if ANY sample is US
+            # KEEP if ANY IP is US
             #
 
             if "US" in countries:
 
-                us_prefixes.append(cidr)
+                us_prefixes.append(
+                    cidr
+                )
 
                 print(
                     f"KEEP {cidr} {countries}"
                 )
+
 
             else:
 
                 print(
                     f"SKIP {cidr} {countries}"
                 )
+
 
 
         except Exception as e:
@@ -307,8 +339,9 @@ def main():
             )
 
 
+
     #
-    # Save US list
+    # Write US list
     #
 
     with open(
@@ -320,12 +353,14 @@ def main():
             f.write(cidr + "\n")
 
 
+    print()
+
     print(
-        "\n===================="
+        "=========================="
     )
 
     print(
-        f"Created {US_CIDR_FILE}"
+        f"Wrote {US_CIDR_FILE}"
     )
 
     print(
@@ -333,12 +368,13 @@ def main():
     )
 
     print(
-        "===================="
+        "=========================="
     )
 
 
+
     #
-    # Split files
+    # Split
     #
 
     write_chunks(
@@ -346,9 +382,13 @@ def main():
     )
 
 
+    reader.close()
+
+
     print(
         "\nDone."
     )
+
 
 
 if __name__ == "__main__":
