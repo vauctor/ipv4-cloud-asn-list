@@ -1,5 +1,6 @@
 import ipaddress
 import requests
+import json
 import time
 import os
 
@@ -18,15 +19,48 @@ US_CIDR_FILE = os.path.join(
     "all_US_cidr_list.txt"
 )
 
+CACHE_FILE = os.path.join(
+    OUTPUT_DIR,
+    "cidr_country_cache.json"
+)
+
 MAX_LINES = 5000
 
-REQUEST_DELAY = 0.25
+REQUEST_DELAY = 1
 
-MAX_RETRIES = 5
+MAX_RETRIES = 3
+
 
 
 # -------------------------
-# Get ASN prefixes
+# Cache Functions
+# -------------------------
+
+def load_cache():
+
+    if os.path.exists(CACHE_FILE):
+
+        with open(CACHE_FILE, "r") as f:
+            return json.load(f)
+
+    return {}
+
+
+
+def save_cache(cache):
+
+    with open(CACHE_FILE, "w") as f:
+
+        json.dump(
+            cache,
+            f,
+            indent=2
+        )
+
+
+
+# -------------------------
+# ASN Prefix Lookup
 # -------------------------
 
 def get_prefixes(asn):
@@ -42,17 +76,22 @@ def get_prefixes(asn):
 
     r.raise_for_status()
 
+
     return [
+
         x.strip()
+
         for x in r.text.splitlines()
+
         if x.strip()
         and ":" not in x
+
     ]
 
 
 
 # -------------------------
-# Sort CIDRs
+# CIDR Sorting
 # -------------------------
 
 def cidr_key(cidr):
@@ -65,7 +104,7 @@ def cidr_key(cidr):
 
 
 # -------------------------
-# Get first IP in CIDR
+# First IP in CIDR
 # -------------------------
 
 def cidr_to_ip(cidr):
@@ -82,14 +121,21 @@ def cidr_to_ip(cidr):
 
 
 # -------------------------
-# ipinfo lookup
+# ipinfo Lookup
 # -------------------------
 
 def get_country(ip):
 
-    url = (
-        f"https://ipinfo.io/{ip}"
-    )
+    url = f"https://ipinfo.io/{ip}"
+
+
+    headers = {
+
+        "User-Agent": "Mozilla/5.0",
+
+        "Accept": "application/json"
+
+    }
 
 
     for attempt in range(MAX_RETRIES):
@@ -98,26 +144,25 @@ def get_country(ip):
 
             r = requests.get(
                 url,
+                headers=headers,
                 timeout=20
             )
 
 
             if r.status_code == 429:
 
-                wait = (
-                    5 * (attempt + 1)
+                print()
+                print(
+                    "429 RATE LIMIT HIT"
                 )
 
                 print(
-                    f"Rate limited. "
-                    f"Sleeping {wait}s"
+                    "Stopping safely. "
+                    "Run again to resume."
                 )
 
-                time.sleep(
-                    wait
-                )
+                raise SystemExit
 
-                continue
 
 
             r.raise_for_status()
@@ -131,24 +176,29 @@ def get_country(ip):
             )
 
 
+
+        except SystemExit:
+
+            raise
+
+
+
         except Exception as e:
 
+            print(
+                f"{ip} lookup failed: {e}"
+            )
 
-            if attempt == MAX_RETRIES - 1:
-
-                print(
-                    f"{ip} lookup failed: {e}"
-                )
-
-                return None
+            time.sleep(5)
 
 
-            time.sleep(3)
+
+    return None
 
 
 
 # -------------------------
-# Split files
+# Split ALL CIDRs
 # -------------------------
 
 def write_chunks(prefixes):
@@ -174,7 +224,7 @@ def write_chunks(prefixes):
 
         filename = os.path.join(
             OUTPUT_DIR,
-            f"US_cidr_list_{index}.txt"
+            f"cidr_list_{index}.txt"
         )
 
 
@@ -210,14 +260,22 @@ def main():
     )
 
 
-    #
-    # Load ASN list
-    #
+    cache = load_cache()
+
+
+    print(
+        f"Loaded {len(cache)} cached CIDRs"
+    )
+
+
+
+    # Load ASNs
 
     with open(
         ASN_FILE,
         "r"
     ) as f:
+
 
         asns = [
 
@@ -232,15 +290,14 @@ def main():
         ]
 
 
+
     print(
         f"Loaded {len(asns)} ASNs"
     )
 
 
 
-    #
     # Collect CIDRs
-    #
 
     all_prefixes = set()
 
@@ -250,7 +307,7 @@ def main():
 
 
         print(
-            f"\nProcessing {asn}"
+            f"Processing {asn}"
         )
 
 
@@ -280,9 +337,7 @@ def main():
 
 
 
-    #
-    # Sort
-    #
+    # Sort CIDRs
 
     sorted_prefixes = sorted(
         all_prefixes,
@@ -291,9 +346,7 @@ def main():
 
 
 
-    #
-    # Write all CIDRs
-    #
+    # Write master list
 
     with open(
         ALL_CIDR_FILE,
@@ -308,11 +361,10 @@ def main():
             )
 
 
-    print()
-
     print(
         f"Wrote {ALL_CIDR_FILE}"
     )
+
 
     print(
         f"Total CIDRs: {len(sorted_prefixes)}"
@@ -320,19 +372,28 @@ def main():
 
 
 
-    #
-    # Filter US
-    #
+    # Split ALL CIDRs
+
+    write_chunks(
+        sorted_prefixes
+    )
+
+
+
+    # Check countries
 
     us_prefixes = []
 
 
+    print()
     print(
-        "\nChecking IP locations..."
+        "Starting country lookups..."
     )
+    print()
 
 
-    for index, cidr in enumerate(
+
+    for count, cidr in enumerate(
         sorted_prefixes,
         start=1
     ):
@@ -343,15 +404,52 @@ def main():
         )
 
 
-        country = get_country(
-            ip
-        )
+        if cidr in cache:
 
 
-        print(
-            f"{index}/{len(sorted_prefixes)} "
-            f"{cidr} -> {ip} -> {country}"
-        )
+            country = cache[cidr]["country"]
+
+
+            print(
+                f"CACHE {count}/{len(sorted_prefixes)} "
+                f"{cidr} -> {country}"
+            )
+
+
+        else:
+
+
+            print(
+                f"LOOKUP {count}/{len(sorted_prefixes)} "
+                f"{cidr} -> {ip}"
+            )
+
+
+            country = get_country(
+                ip
+            )
+
+
+            cache[cidr] = {
+
+                "country": country,
+
+                "checked": time.strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
+
+            }
+
+
+            save_cache(
+                cache
+            )
+
+
+            time.sleep(
+                REQUEST_DELAY
+            )
+
 
 
         if country == "US":
@@ -361,15 +459,8 @@ def main():
             )
 
 
-        time.sleep(
-            REQUEST_DELAY
-        )
 
-
-
-    #
-    # Write US CIDRs
-    #
+    # Write US only list
 
     with open(
         US_CIDR_FILE,
@@ -386,9 +477,8 @@ def main():
 
 
     print()
-
     print(
-        "======================="
+        "=============================="
     )
 
     print(
@@ -400,16 +490,7 @@ def main():
     )
 
     print(
-        "======================="
-    )
-
-
-    #
-    # Split
-    #
-
-    write_chunks(
-        us_prefixes
+        "=============================="
     )
 
 
