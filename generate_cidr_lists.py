@@ -1,183 +1,173 @@
 import ipaddress
 import requests
+import time
 import os
 
 ASN_FILE = "asn.txt"
 
 OUTPUT_DIR = "output"
 
-US_ASN_FILE = os.path.join(OUTPUT_DIR, "US_asn.txt")
-MASTER_FILE = os.path.join(OUTPUT_DIR, "all_US_cidr_list.txt")
+ALL_CIDR_FILE = os.path.join(
+    OUTPUT_DIR,
+    "all_cidr_list.txt"
+)
+
+US_CIDR_FILE = os.path.join(
+    OUTPUT_DIR,
+    "all_US_cidr_list.txt"
+)
 
 MAX_LINES = 5000
 
 
-def normalize_asn(asn):
-    asn = asn.strip().upper()
-
-    if not asn.startswith("AS"):
-        asn = "AS" + asn
-
-    return asn
-
-
-def get_asn_holder(asn):
-    """
-    Gets ASN organization name from RIPE Stat
-    """
-
-    asn_number = asn.replace("AS", "")
-
-    url = (
-        "https://stat.ripe.net/data/as-overview/"
-        f"data.json?resource=AS{asn_number}"
-    )
-
-    response = requests.get(url, timeout=20)
-    response.raise_for_status()
-
-    data = response.json()
-
-    holder = (
-        data
-        .get("data", {})
-        .get("holder", "")
-    )
-
-    print(f"{asn}: {holder}")
-
-    return holder
-
-
 def get_prefixes(asn):
     """
-    Gets IPv4 prefixes from ASN
+    Get IPv4 prefixes from ASN
     """
 
     url = f"https://asn.ipinfo.app/api/text/list/{asn}"
 
-    response = requests.get(url, timeout=20)
-    response.raise_for_status()
+    r = requests.get(
+        url,
+        timeout=20
+    )
 
-    lines = response.text.splitlines()
+    r.raise_for_status()
+
+    lines = r.text.splitlines()
 
     ipv4 = [
-        line.strip()
-        for line in lines
-        if line.strip()
-        and ":" not in line
+        x.strip()
+        for x in lines
+        if x.strip()
+        and ":" not in x
     ]
 
     return ipv4
 
 
 def cidr_key(cidr):
+    """
+    Sort CIDRs properly
+    """
+
     try:
         return ipaddress.IPv4Network(
-            cidr,
+            cidr.strip(),
             strict=False
         )
 
     except Exception:
-        return ipaddress.IPv4Network("0.0.0.0/0")
+        return ipaddress.IPv4Network(
+            "0.0.0.0/0"
+        )
+
+
+def cidr_to_ip(cidr):
+    """
+    Get first IP in CIDR
+    """
+
+    network = ipaddress.IPv4Network(
+        cidr,
+        strict=False
+    )
+
+    return str(network.network_address)
+
+
+def get_country(ip):
+    """
+    ipinfo.io lookup
+    """
+
+    url = f"https://ipinfo.io/{ip}"
+
+    r = requests.get(
+        url,
+        timeout=20
+    )
+
+    r.raise_for_status()
+
+    data = r.json()
+
+    return data.get("country")
+
+
+def write_chunks(prefixes, prefix_name):
+
+    chunks = [
+        prefixes[i:i + MAX_LINES]
+        for i in range(
+            0,
+            len(prefixes),
+            MAX_LINES
+        )
+    ]
+
+    for idx, chunk in enumerate(
+        chunks,
+        start=1
+    ):
+
+        filename = os.path.join(
+            OUTPUT_DIR,
+            f"{prefix_name}_{idx}.txt"
+        )
+
+        with open(
+            filename,
+            "w"
+        ) as f:
+
+            for cidr in chunk:
+                f.write(cidr + "\n")
+
+
+        print(
+            f"Wrote {filename} "
+            f"({len(chunk)} entries)"
+        )
 
 
 def main():
 
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    os.makedirs(
+        OUTPUT_DIR,
+        exist_ok=True
+    )
 
 
     #
-    # Read ASN list
+    # Read ASNs
     #
     with open(ASN_FILE, "r") as f:
 
         asns = [
-            normalize_asn(line)
+            line.strip()
             for line in f
             if line.strip()
             and not line.startswith("#")
         ]
 
 
-    print(f"Loaded {len(asns)} ASNs")
-
-
-    #
-    # Identify US organizations
-    #
-    us_asns = []
-
-
-    us_keywords = [
-        "GOOGLE",
-        "AMAZON",
-        "MICROSOFT",
-        "CLOUDFLARE",
-        "META",
-        "ORACLE",
-        "DIGITALOCEAN",
-        "FASTLY",
-        "AKAMAI",
-        "IBM",
-        "VULTR",
-        "LINODE",
-        "HEWLETT",
-        "HPE"
-    ]
-
-
-    print("\nChecking ASN owners...\n")
-
-
-    for asn in asns:
-
-        try:
-
-            holder = get_asn_holder(asn)
-
-            if any(
-                keyword in holder.upper()
-                for keyword in us_keywords
-            ):
-
-                us_asns.append(asn)
-
-
-        except Exception as e:
-
-            print(
-                f"{asn} lookup failed: {e}"
-            )
-
-
-    #
-    # Write US ASN list
-    #
-    with open(US_ASN_FILE, "w") as f:
-
-        for asn in sorted(us_asns):
-            f.write(asn + "\n")
-
-
     print(
-        f"\nCreated {US_ASN_FILE}"
-        f" ({len(us_asns)} ASNs)"
+        f"Loaded {len(asns)} ASNs"
     )
 
 
     #
-    # Pull CIDRs
+    # Get all CIDRs
     #
     all_prefixes = set()
 
 
-    print("\nDownloading CIDRs...\n")
+    for asn in asns:
 
-
-    for asn in us_asns:
-
-        print(f"Processing {asn}")
+        print(
+            f"Processing {asn}"
+        )
 
         try:
 
@@ -193,12 +183,12 @@ def main():
         except Exception as e:
 
             print(
-                f"{asn} prefix lookup failed: {e}"
+                f"Failed {asn}: {e}"
             )
 
 
     #
-    # Sort CIDRs
+    # Sort
     #
     sorted_prefixes = sorted(
         all_prefixes,
@@ -207,54 +197,97 @@ def main():
 
 
     #
-    # Write full CIDR list
+    # Write all CIDRs
     #
-    with open(MASTER_FILE, "w") as f:
+    with open(
+        ALL_CIDR_FILE,
+        "w"
+    ) as f:
 
         for cidr in sorted_prefixes:
             f.write(cidr + "\n")
 
 
     print(
-        f"\nCreated {MASTER_FILE}"
-        f" ({len(sorted_prefixes)} CIDRs)"
+        f"\nWrote {ALL_CIDR_FILE}"
+        f" ({len(sorted_prefixes)} entries)"
     )
 
 
     #
-    # Split into 5000 line files
+    # Check US locations
     #
-    chunks = [
-        sorted_prefixes[i:i + MAX_LINES]
-        for i in range(
-            0,
-            len(sorted_prefixes),
-            MAX_LINES
-        )
-    ]
+    print(
+        "\nChecking CIDRs against ipinfo.io..."
+    )
 
 
-    for index, chunk in enumerate(chunks, start=1):
-
-        filename = os.path.join(
-            OUTPUT_DIR,
-            f"cidr_list_{index}.txt"
-        )
-
-        with open(filename, "w") as f:
-
-            for cidr in chunk:
-                f.write(cidr + "\n")
+    us_prefixes = []
 
 
-        print(
-            f"Created {filename}"
-            f" ({len(chunk)} CIDRs)"
-        )
+    for count, cidr in enumerate(
+        sorted_prefixes,
+        start=1
+    ):
+
+        try:
+
+            ip = cidr_to_ip(cidr)
+
+            country = get_country(ip)
 
 
-    print("\nComplete.")
+            print(
+                f"{count}/{len(sorted_prefixes)} "
+                f"{cidr} -> {country}"
+            )
 
+
+            if country == "US":
+                us_prefixes.append(cidr)
+
+
+            # slow down to avoid rate limits
+            time.sleep(0.5)
+
+
+        except Exception as e:
+
+            print(
+                f"Failed {cidr}: {e}"
+            )
+
+
+    #
+    # Write US CIDRs
+    #
+    with open(
+        US_CIDR_FILE,
+        "w"
+    ) as f:
+
+        for cidr in us_prefixes:
+            f.write(cidr + "\n")
+
+
+    print(
+        f"\nWrote {US_CIDR_FILE}"
+        f" ({len(us_prefixes)} entries)"
+    )
+
+
+    #
+    # Split US CIDRs
+    #
+    write_chunks(
+        us_prefixes,
+        "US_cidr_list"
+    )
+
+
+    print(
+        "\nDone."
+    )
 
 
 if __name__ == "__main__":
