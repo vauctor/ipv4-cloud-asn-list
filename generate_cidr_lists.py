@@ -1,6 +1,6 @@
 import ipaddress
-import os
 import requests
+import os
 
 ASN_FILE = "asn.txt"
 
@@ -13,9 +13,6 @@ MAX_LINES = 5000
 
 
 def normalize_asn(asn):
-    """
-    Ensures ASN is formatted as AS12345
-    """
     asn = asn.strip().upper()
 
     if not asn.startswith("AS"):
@@ -24,32 +21,37 @@ def normalize_asn(asn):
     return asn
 
 
-def get_country(asn):
+def get_asn_holder(asn):
     """
-    Gets ASN country from BGPView
+    Gets ASN organization name from RIPE Stat
     """
 
     asn_number = asn.replace("AS", "")
 
-    url = f"https://api.bgpview.io/asn/{asn_number}"
+    url = (
+        "https://stat.ripe.net/data/as-overview/"
+        f"data.json?resource=AS{asn_number}"
+    )
 
     response = requests.get(url, timeout=20)
     response.raise_for_status()
 
     data = response.json()
 
-    asn_data = data.get("data", {})
+    holder = (
+        data
+        .get("data", {})
+        .get("holder", "")
+    )
 
-    country = asn_data.get("country_code")
+    print(f"{asn}: {holder}")
 
-    print(f"{asn} country: {country}")
-
-    return country
+    return holder
 
 
 def get_prefixes(asn):
     """
-    Gets IPv4 prefixes from ipinfo ASN API
+    Gets IPv4 prefixes from ASN
     """
 
     url = f"https://asn.ipinfo.app/api/text/list/{asn}"
@@ -62,20 +64,17 @@ def get_prefixes(asn):
     ipv4 = [
         line.strip()
         for line in lines
-        if line.strip() and ":" not in line
+        if line.strip()
+        and ":" not in line
     ]
 
     return ipv4
 
 
 def cidr_key(cidr):
-    """
-    Sort IPv4 CIDRs properly
-    """
-
     try:
         return ipaddress.IPv4Network(
-            cidr.strip(),
+            cidr,
             strict=False
         )
 
@@ -87,10 +86,12 @@ def main():
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
+
     #
     # Read ASN list
     #
     with open(ASN_FILE, "r") as f:
+
         asns = [
             normalize_asn(line)
             for line in f
@@ -103,24 +104,51 @@ def main():
 
 
     #
-    # Find US ASNs
+    # Identify US organizations
     #
     us_asns = []
 
-    print("\nChecking ASN countries...\n")
+
+    us_keywords = [
+        "GOOGLE",
+        "AMAZON",
+        "MICROSOFT",
+        "CLOUDFLARE",
+        "META",
+        "ORACLE",
+        "DIGITALOCEAN",
+        "FASTLY",
+        "AKAMAI",
+        "IBM",
+        "VULTR",
+        "LINODE",
+        "HEWLETT",
+        "HPE"
+    ]
+
+
+    print("\nChecking ASN owners...\n")
 
 
     for asn in asns:
 
         try:
 
-            country = get_country(asn)
+            holder = get_asn_holder(asn)
 
-            if country and country.upper() == "US":
+            if any(
+                keyword in holder.upper()
+                for keyword in us_keywords
+            ):
+
                 us_asns.append(asn)
 
+
         except Exception as e:
-            print(f"{asn} lookup failed: {e}")
+
+            print(
+                f"{asn} lookup failed: {e}"
+            )
 
 
     #
@@ -133,18 +161,18 @@ def main():
 
 
     print(
-        f"\nCreated {US_ASN_FILE} "
-        f"with {len(us_asns)} ASNs"
+        f"\nCreated {US_ASN_FILE}"
+        f" ({len(us_asns)} ASNs)"
     )
 
 
     #
-    # Get CIDRs
+    # Pull CIDRs
     #
     all_prefixes = set()
 
 
-    print("\nDownloading IPv4 prefixes...\n")
+    print("\nDownloading CIDRs...\n")
 
 
     for asn in us_asns:
@@ -156,7 +184,7 @@ def main():
             prefixes = get_prefixes(asn)
 
             print(
-                f"  Found {len(prefixes)} IPv4 prefixes"
+                f"  Found {len(prefixes)} IPv4 CIDRs"
             )
 
             all_prefixes.update(prefixes)
@@ -165,7 +193,7 @@ def main():
         except Exception as e:
 
             print(
-                f"Failed getting prefixes for {asn}: {e}"
+                f"{asn} prefix lookup failed: {e}"
             )
 
 
@@ -179,7 +207,7 @@ def main():
 
 
     #
-    # Write master file
+    # Write full CIDR list
     #
     with open(MASTER_FILE, "w") as f:
 
@@ -188,13 +216,13 @@ def main():
 
 
     print(
-        f"\nCreated {MASTER_FILE} "
-        f"with {len(sorted_prefixes)} CIDRs"
+        f"\nCreated {MASTER_FILE}"
+        f" ({len(sorted_prefixes)} CIDRs)"
     )
 
 
     #
-    # Split files
+    # Split into 5000 line files
     #
     chunks = [
         sorted_prefixes[i:i + MAX_LINES]
@@ -220,12 +248,12 @@ def main():
 
 
         print(
-            f"Created {filename} "
-            f"({len(chunk)} entries)"
+            f"Created {filename}"
+            f" ({len(chunk)} CIDRs)"
         )
 
 
-    print("\nCompleted successfully.")
+    print("\nComplete.")
 
 
 
