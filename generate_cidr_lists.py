@@ -3,6 +3,7 @@ import requests
 import time
 import os
 
+
 ASN_FILE = "asn.txt"
 
 OUTPUT_DIR = "output"
@@ -19,10 +20,13 @@ US_CIDR_FILE = os.path.join(
 
 MAX_LINES = 5000
 
+# Delay between ipinfo requests
+REQUEST_DELAY = 0.5
+
 
 def get_prefixes(asn):
     """
-    Get IPv4 prefixes from ASN
+    Get IPv4 prefixes announced by ASN
     """
 
     url = f"https://asn.ipinfo.app/api/text/list/{asn}"
@@ -36,19 +40,17 @@ def get_prefixes(asn):
 
     lines = r.text.splitlines()
 
-    ipv4 = [
+    return [
         x.strip()
         for x in lines
         if x.strip()
         and ":" not in x
     ]
 
-    return ipv4
-
 
 def cidr_key(cidr):
     """
-    Sort CIDRs properly
+    Sort CIDRs correctly
     """
 
     try:
@@ -63,9 +65,9 @@ def cidr_key(cidr):
         )
 
 
-def cidr_to_ip(cidr):
+def sample_ips(cidr):
     """
-    Get first IP in CIDR
+    Select IPs to test inside CIDR
     """
 
     network = ipaddress.IPv4Network(
@@ -73,12 +75,30 @@ def cidr_to_ip(cidr):
         strict=False
     )
 
-    return str(network.network_address)
+    total = network.num_addresses
+
+    # Small networks: check all
+    if total <= 16:
+
+        return [
+            str(ip)
+            for ip in network
+        ]
+
+
+    return [
+        str(network.network_address),
+        str(
+            network.network_address +
+            int(total / 2)
+        ),
+        str(network.broadcast_address)
+    ]
 
 
 def get_country(ip):
     """
-    ipinfo.io lookup
+    Query ipinfo.io
     """
 
     url = f"https://ipinfo.io/{ip}"
@@ -95,7 +115,7 @@ def get_country(ip):
     return data.get("country")
 
 
-def write_chunks(prefixes, prefix_name):
+def write_chunks(prefixes, name):
 
     chunks = [
         prefixes[i:i + MAX_LINES]
@@ -106,14 +126,15 @@ def write_chunks(prefixes, prefix_name):
         )
     ]
 
-    for idx, chunk in enumerate(
+
+    for index, chunk in enumerate(
         chunks,
         start=1
     ):
 
         filename = os.path.join(
             OUTPUT_DIR,
-            f"{prefix_name}_{idx}.txt"
+            f"{name}_{index}.txt"
         )
 
         with open(
@@ -140,9 +161,12 @@ def main():
 
 
     #
-    # Read ASNs
+    # Load ASNs
     #
-    with open(ASN_FILE, "r") as f:
+    with open(
+        ASN_FILE,
+        "r"
+    ) as f:
 
         asns = [
             line.strip()
@@ -158,7 +182,7 @@ def main():
 
 
     #
-    # Get all CIDRs
+    # Get CIDRs from ASNs
     #
     all_prefixes = set()
 
@@ -174,7 +198,7 @@ def main():
             prefixes = get_prefixes(asn)
 
             print(
-                f"  Found {len(prefixes)} IPv4 CIDRs"
+                f"  Found {len(prefixes)} IPv4 prefixes"
             )
 
             all_prefixes.update(prefixes)
@@ -183,12 +207,12 @@ def main():
         except Exception as e:
 
             print(
-                f"Failed {asn}: {e}"
+                f"{asn} failed: {e}"
             )
 
 
     #
-    # Sort
+    # Sort CIDRs
     #
     sorted_prefixes = sorted(
         all_prefixes,
@@ -197,7 +221,7 @@ def main():
 
 
     #
-    # Write all CIDRs
+    # Write full CIDR list
     #
     with open(
         ALL_CIDR_FILE,
@@ -209,52 +233,76 @@ def main():
 
 
     print(
-        f"\nWrote {ALL_CIDR_FILE}"
+        f"Wrote {ALL_CIDR_FILE}"
         f" ({len(sorted_prefixes)} entries)"
     )
 
 
     #
-    # Check US locations
+    # Check US location
     #
-    print(
-        "\nChecking CIDRs against ipinfo.io..."
-    )
-
-
     us_prefixes = []
 
 
-    for count, cidr in enumerate(
+    print(
+        "\nChecking CIDRs with ipinfo.io...\n"
+    )
+
+
+    for index, cidr in enumerate(
         sorted_prefixes,
         start=1
     ):
 
         try:
 
-            ip = cidr_to_ip(cidr)
+            samples = sample_ips(cidr)
 
-            country = get_country(ip)
-
-
-            print(
-                f"{count}/{len(sorted_prefixes)} "
-                f"{cidr} -> {country}"
-            )
+            countries = []
 
 
-            if country == "US":
+            for ip in samples:
+
+                country = get_country(ip)
+
+                countries.append(country)
+
+                print(
+                    f"{index}/{len(sorted_prefixes)} "
+                    f"{cidr} "
+                    f"{ip} -> {country}"
+                )
+
+                time.sleep(
+                    REQUEST_DELAY
+                )
+
+
+            #
+            # Require ALL samples to be US
+            #
+            if all(
+                c == "US"
+                for c in countries
+            ):
+
                 us_prefixes.append(cidr)
 
+                print(
+                    f"KEEP {cidr}"
+                )
 
-            # slow down to avoid rate limits
-            time.sleep(0.5)
+            else:
+
+                print(
+                    f"SKIP {cidr}"
+                )
 
 
         except Exception as e:
 
             print(
-                f"Failed {cidr}: {e}"
+                f"{cidr} failed: {e}"
             )
 
 
