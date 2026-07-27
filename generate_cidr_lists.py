@@ -1,12 +1,10 @@
-import geoip2.database
 import ipaddress
 import requests
+import time
 import os
 
 
 ASN_FILE = "asn.txt"
-
-GEOIP_DB = "GeoLite2-Country.mmdb"
 
 OUTPUT_DIR = "output"
 
@@ -22,48 +20,20 @@ US_CIDR_FILE = os.path.join(
 
 MAX_LINES = 5000
 
+REQUEST_DELAY = 0.25
 
-# -------------------------
-# GeoLite2 Database
-# -------------------------
-
-reader = geoip2.database.Reader(
-    GEOIP_DB
-)
-
-
-def get_country(ip):
-    """
-    Lookup IP country locally
-    """
-
-    try:
-
-        result = reader.country(ip)
-
-        return result.country.iso_code
-
-    except Exception:
-
-        return None
-
+MAX_RETRIES = 5
 
 
 # -------------------------
-# RIPEstat ASN Prefix Lookup
+# Get ASN prefixes
 # -------------------------
 
 def get_prefixes(asn):
-    """
-    Get announced IPv4 prefixes from RIPEstat
-    """
 
     url = (
-        "https://stat.ripe.net/data/"
-        "announced-prefixes/data.json?"
-        f"resource={asn}"
+        f"https://asn.ipinfo.app/api/text/list/{asn}"
     )
-
 
     r = requests.get(
         url,
@@ -72,32 +42,17 @@ def get_prefixes(asn):
 
     r.raise_for_status()
 
-
-    data = r.json()
-
-
-    prefixes = []
-
-
-    for item in data["data"]["prefixes"]:
-
-        prefix = item["prefix"]
-
-
-        # IPv4 only
-        if ":" not in prefix:
-
-            prefixes.append(
-                prefix
-            )
-
-
-    return prefixes
+    return [
+        x.strip()
+        for x in r.text.splitlines()
+        if x.strip()
+        and ":" not in x
+    ]
 
 
 
 # -------------------------
-# CIDR Sorting
+# Sort CIDRs
 # -------------------------
 
 def cidr_key(cidr):
@@ -110,46 +65,90 @@ def cidr_key(cidr):
 
 
 # -------------------------
-# Sample IPs in CIDR
+# Get first IP in CIDR
 # -------------------------
 
-def sample_ips(cidr):
+def cidr_to_ip(cidr):
 
     network = ipaddress.IPv4Network(
         cidr,
         strict=False
     )
 
-    total = network.num_addresses
-
-
-    # Small ranges: check all
-    if total <= 16:
-
-        return [
-            str(ip)
-            for ip in network
-        ]
-
-
-    # Large ranges
-    return [
-
-        str(network.network_address),
-
-        str(
-            network.network_address +
-            int(total / 2)
-        ),
-
-        str(network.broadcast_address)
-
-    ]
+    return str(
+        network.network_address
+    )
 
 
 
 # -------------------------
-# Write split files
+# ipinfo lookup
+# -------------------------
+
+def get_country(ip):
+
+    url = (
+        f"https://ipinfo.io/{ip}"
+    )
+
+
+    for attempt in range(MAX_RETRIES):
+
+        try:
+
+            r = requests.get(
+                url,
+                timeout=20
+            )
+
+
+            if r.status_code == 429:
+
+                wait = (
+                    5 * (attempt + 1)
+                )
+
+                print(
+                    f"Rate limited. "
+                    f"Sleeping {wait}s"
+                )
+
+                time.sleep(
+                    wait
+                )
+
+                continue
+
+
+            r.raise_for_status()
+
+
+            data = r.json()
+
+
+            return data.get(
+                "country"
+            )
+
+
+        except Exception as e:
+
+
+            if attempt == MAX_RETRIES - 1:
+
+                print(
+                    f"{ip} lookup failed: {e}"
+                )
+
+                return None
+
+
+            time.sleep(3)
+
+
+
+# -------------------------
+# Split files
 # -------------------------
 
 def write_chunks(prefixes):
@@ -205,7 +204,6 @@ def write_chunks(prefixes):
 
 def main():
 
-
     os.makedirs(
         OUTPUT_DIR,
         exist_ok=True
@@ -213,14 +211,13 @@ def main():
 
 
     #
-    # Load ASNs
+    # Load ASN list
     #
 
     with open(
         ASN_FILE,
         "r"
     ) as f:
-
 
         asns = [
 
@@ -242,7 +239,7 @@ def main():
 
 
     #
-    # Get CIDRs
+    # Collect CIDRs
     #
 
     all_prefixes = set()
@@ -259,14 +256,13 @@ def main():
 
         try:
 
-
             prefixes = get_prefixes(
                 asn
             )
 
 
             print(
-                f"Found {len(prefixes)} IPv4 prefixes"
+                f"Found {len(prefixes)} IPv4 CIDRs"
             )
 
 
@@ -285,7 +281,7 @@ def main():
 
 
     #
-    # Sort CIDRs
+    # Sort
     #
 
     sorted_prefixes = sorted(
@@ -325,86 +321,54 @@ def main():
 
 
     #
-    # Geo filtering
+    # Filter US
     #
 
     us_prefixes = []
 
 
     print(
-        "\nChecking GeoLite2 locations...\n"
+        "\nChecking IP locations..."
     )
 
 
-
-    for count, cidr in enumerate(
+    for index, cidr in enumerate(
         sorted_prefixes,
         start=1
     ):
 
 
-        try:
+        ip = cidr_to_ip(
+            cidr
+        )
 
 
-            samples = sample_ips(
+        country = get_country(
+            ip
+        )
+
+
+        print(
+            f"{index}/{len(sorted_prefixes)} "
+            f"{cidr} -> {ip} -> {country}"
+        )
+
+
+        if country == "US":
+
+            us_prefixes.append(
                 cidr
             )
 
 
-            countries = []
-
-
-            for ip in samples:
-
-
-                country = get_country(
-                    ip
-                )
-
-
-                countries.append(
-                    country
-                )
-
-
-
-            #
-            # KEEP if ANY IP is US
-            #
-
-            if "US" in countries:
-
-
-                us_prefixes.append(
-                    cidr
-                )
-
-
-                print(
-                    f"KEEP {cidr} {countries}"
-                )
-
-
-            else:
-
-
-                print(
-                    f"SKIP {cidr} {countries}"
-                )
-
-
-
-        except Exception as e:
-
-
-            print(
-                f"{cidr} failed: {e}"
-            )
+        time.sleep(
+            REQUEST_DELAY
+        )
 
 
 
     #
-    # Write US file
+    # Write US CIDRs
     #
 
     with open(
@@ -424,7 +388,7 @@ def main():
     print()
 
     print(
-        "=============================="
+        "======================="
     )
 
     print(
@@ -436,9 +400,8 @@ def main():
     )
 
     print(
-        "=============================="
+        "======================="
     )
-
 
 
     #
@@ -450,11 +413,8 @@ def main():
     )
 
 
-    reader.close()
-
-
     print(
-        "\nDone."
+        "Done."
     )
 
 
