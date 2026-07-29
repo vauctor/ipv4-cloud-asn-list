@@ -6,8 +6,15 @@ import os
 
 
 ASN_FILE = "asn.txt"
+
 OUTPUT_DIR = "output"
+
 IPINFO_TOKEN = os.environ.get("IPINFO_TOKEN")
+
+BATCH_SIZE = 1000
+
+MAX_LINES = 5000
+
 
 ALL_CIDR_FILE = os.path.join(
     OUTPUT_DIR,
@@ -18,45 +25,6 @@ US_CIDR_FILE = os.path.join(
     OUTPUT_DIR,
     "all_US_cidr_list.txt"
 )
-
-CACHE_FILE = os.path.join(
-    OUTPUT_DIR,
-    "cidr_country_cache.json"
-)
-
-MAX_LINES = 5000
-
-REQUEST_DELAY = 0
-
-MAX_RETRIES = 3
-
-
-
-# -------------------------
-# Cache Functions
-# -------------------------
-
-def load_cache():
-
-    if os.path.exists(CACHE_FILE):
-
-        with open(CACHE_FILE, "r") as f:
-            return json.load(f)
-
-    return {}
-
-
-
-def save_cache(cache):
-
-    with open(CACHE_FILE, "w") as f:
-
-        json.dump(
-            cache,
-            f,
-            indent=2
-        )
-
 
 
 # -------------------------
@@ -75,7 +43,6 @@ def get_prefixes(asn):
     )
 
     r.raise_for_status()
-
 
     return [
 
@@ -121,63 +88,40 @@ def cidr_to_ip(cidr):
 
 
 # -------------------------
-# ipinfo Lookup
+# IPinfo Lite Batch Lookup
 # -------------------------
 
-# -------------------------
-# IPinfo Lite Lookup
-# -------------------------
-
-def get_country(ip):
+def get_countries_batch(ips):
 
     url = (
-        f"https://api.ipinfo.io/lite/{ip}"
+        "https://api.ipinfo.io/batch/lite"
         f"?token={IPINFO_TOKEN}"
     )
 
 
-    headers = {
+    try:
 
-        "User-Agent": "Mozilla/5.0",
-
-        "Accept": "application/json"
-
-    }
-
-
-    for attempt in range(MAX_RETRIES):
-
-        try:
-
-            r = requests.get(
-                url,
-                headers=headers,
-                timeout=20
-            )
+        r = requests.post(
+            url,
+            json=ips,
+            timeout=120
+        )
 
 
-            r.raise_for_status()
+        r.raise_for_status()
 
 
-            data = r.json()
+        return r.json()
 
 
-            return data.get(
-                "country_code"
-            )
+    except Exception as e:
 
+        print(
+            f"Batch lookup failed: {e}"
+        )
 
-        except Exception as e:
+        return {}
 
-            print(
-                f"{ip} lookup failed: {e}"
-            )
-
-            time.sleep(5)
-
-
-
-    return None
 
 
 # -------------------------
@@ -243,12 +187,11 @@ def main():
     )
 
 
-    cache = load_cache()
+    if not IPINFO_TOKEN:
 
-
-    print(
-        f"Loaded {len(cache)} cached CIDRs"
-    )
+        raise Exception(
+            "Missing IPINFO_TOKEN GitHub secret"
+        )
 
 
 
@@ -363,87 +306,110 @@ def main():
 
 
 
-    # Check countries
-
-    us_prefixes = []
-
+    # -------------------------
+    # Country Checks
+    # -------------------------
 
     print()
     print(
-        "Starting country lookups..."
+        "Starting IPinfo batch country lookups..."
     )
     print()
 
 
 
-    for count, cidr in enumerate(
-        sorted_prefixes,
-        start=1
-    ):
+    us_prefixes = []
 
+
+    ip_to_cidr = {}
+
+    ips = []
+
+
+
+    for cidr in sorted_prefixes:
 
         ip = cidr_to_ip(
             cidr
         )
 
+        ips.append(
+            ip
+        )
 
-        if cidr in cache:
-
-
-            country = cache[cidr]["country"]
-
-
-            print(
-                f"CACHE {count}/{len(sorted_prefixes)} "
-                f"{cidr} -> {country}"
-            )
+        ip_to_cidr[ip] = cidr
 
 
-        else:
+
+    total_batches = (
+        len(ips) + BATCH_SIZE - 1
+    ) // BATCH_SIZE
 
 
-            print(
-                f"LOOKUP {count}/{len(sorted_prefixes)} "
-                f"{cidr} -> {ip}"
-            )
+
+    for batch_number, start in enumerate(
+        range(
+            0,
+            len(ips),
+            BATCH_SIZE
+        ),
+        start=1
+    ):
 
 
-            country = get_country(
+        batch = ips[
+            start:start+BATCH_SIZE
+        ]
+
+
+        print(
+            f"Batch {batch_number}/{total_batches} "
+            f"({len(batch)} IPs)"
+        )
+
+
+        results = get_countries_batch(
+            batch
+        )
+
+
+
+        for ip, data in results.items():
+
+
+            cidr = ip_to_cidr.get(
                 ip
             )
 
 
-            cache[cidr] = {
+            if not cidr:
 
-                "country": country,
+                continue
 
-                "checked": time.strftime(
-                    "%Y-%m-%d %H:%M:%S"
+
+
+            country = data.get(
+                "country_code"
+            )
+
+
+            if country == "US":
+
+                us_prefixes.append(
+                    cidr
                 )
 
-            }
 
 
-            save_cache(
-                cache
-            )
-
-
-            time.sleep(
-                REQUEST_DELAY
-            )
+        time.sleep(
+            1
+        )
 
 
 
-        if country == "US":
-
-            us_prefixes.append(
-                cidr
-            )
-
-
-
-    # Write US only list
+    # -------------------------
+    # Write US CIDRs
+    # -------------------------
 
     with open(
         US_CIDR_FILE,
@@ -451,7 +417,10 @@ def main():
     ) as f:
 
 
-        for cidr in us_prefixes:
+        for cidr in sorted(
+            us_prefixes,
+            key=cidr_key
+        ):
 
             f.write(
                 cidr + "\n"
