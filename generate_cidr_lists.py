@@ -6,8 +6,8 @@ import os
 
 
 ASN_FILE = "asn.txt"
-
 OUTPUT_DIR = "output"
+IPINFO_TOKEN = "10a5b4beb4f0ae"
 
 ALL_CIDR_FILE = os.path.join(
     OUTPUT_DIR,
@@ -124,9 +124,16 @@ def cidr_to_ip(cidr):
 # ipinfo Lookup
 # -------------------------
 
+# -------------------------
+# IPinfo Lite Lookup
+# -------------------------
+
 def get_country(ip):
 
-    url = f"https://ipinfo.io/{ip}"
+    url = (
+        f"https://api.ipinfo.io/lite/{ip}"
+        f"?token={IPINFO_TOKEN}"
+    )
 
 
     headers = {
@@ -149,22 +156,6 @@ def get_country(ip):
             )
 
 
-            if r.status_code == 429:
-
-                print()
-                print(
-                    "429 RATE LIMIT HIT"
-                )
-
-                print(
-                    "Stopping safely. "
-                    "Run again to resume."
-                )
-
-                raise SystemExit
-
-
-
             r.raise_for_status()
 
 
@@ -172,15 +163,8 @@ def get_country(ip):
 
 
             return data.get(
-                "country"
+                "country_code"
             )
-
-
-
-        except SystemExit:
-
-            raise
-
 
 
         except Exception as e:
@@ -194,7 +178,6 @@ def get_country(ip):
 
 
     return None
-
 
 
 # -------------------------
