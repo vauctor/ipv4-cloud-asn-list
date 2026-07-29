@@ -27,6 +27,8 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run generator
+        env:
+          IPINFO_TOKEN: ${{ secrets.IPINFO_TOKEN }}
         run: python generate_cidr_lists.py
 
       - name: Commit results
