@@ -23,7 +23,7 @@ ALL_CIDR_FILE = os.path.join(
 
 US_CIDR_FILE = os.path.join(
     OUTPUT_DIR,
-    "all_US_cidr_list.txt"
+    "US_cidr_list.txt"
 )
 
 CACHE_FILE = os.path.join(
