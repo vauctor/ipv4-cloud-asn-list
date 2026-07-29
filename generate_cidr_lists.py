@@ -10,6 +10,7 @@ ASN_FILE = "asn.txt"
 OUTPUT_DIR = "output"
 
 IPINFO_TOKEN = os.environ.get("IPINFO_TOKEN")
+print(f"IPINFO_TOKEN loaded: {bool(IPINFO_TOKEN)}")
 
 BATCH_SIZE = 1000
 
