@@ -10,7 +10,6 @@ ASN_FILE = "asn.txt"
 OUTPUT_DIR = "output"
 
 IPINFO_TOKEN = os.environ.get("IPINFO_TOKEN")
-print(f"IPINFO_TOKEN loaded: {bool(IPINFO_TOKEN)}")
 
 BATCH_SIZE = 1000
 
@@ -27,6 +26,47 @@ US_CIDR_FILE = os.path.join(
     "all_US_cidr_list.txt"
 )
 
+CACHE_FILE = os.path.join(
+    OUTPUT_DIR,
+    "cidr_country_cache.json"
+)
+
+
+
+# -------------------------
+# Cache Functions
+# -------------------------
+
+def load_cache():
+
+    if os.path.exists(CACHE_FILE):
+
+        with open(
+            CACHE_FILE,
+            "r"
+        ) as f:
+
+            return json.load(f)
+
+
+    return {}
+
+
+
+def save_cache(cache):
+
+    with open(
+        CACHE_FILE,
+        "w"
+    ) as f:
+
+        json.dump(
+            cache,
+            f,
+            indent=2
+        )
+
+
 
 # -------------------------
 # ASN Prefix Lookup
@@ -38,12 +78,15 @@ def get_prefixes(asn):
         f"https://asn.ipinfo.app/api/text/list/{asn}"
     )
 
+
     r = requests.get(
         url,
         timeout=30
     )
 
+
     r.raise_for_status()
+
 
     return [
 
@@ -82,6 +125,7 @@ def cidr_to_ip(cidr):
         strict=False
     )
 
+
     return str(
         network.network_address
     )
@@ -100,11 +144,17 @@ def get_countries_batch(ips):
     )
 
 
+    headers = {
+        "Accept": "application/json"
+    }
+
+
     try:
 
         r = requests.post(
             url,
             json=ips,
+            headers=headers,
             timeout=120
         )
 
@@ -121,12 +171,13 @@ def get_countries_batch(ips):
             f"Batch lookup failed: {e}"
         )
 
+
         return {}
 
 
 
 # -------------------------
-# Split ALL CIDRs
+# Split CIDR Files
 # -------------------------
 
 def write_chunks(prefixes):
@@ -174,8 +225,6 @@ def write_chunks(prefixes):
             f"({len(chunk)} entries)"
         )
 
-
-
 # -------------------------
 # Main
 # -------------------------
@@ -195,8 +244,18 @@ def main():
         )
 
 
+    cache = load_cache()
 
-    # Load ASNs
+
+    print(
+        f"Loaded {len(cache)} cached records"
+    )
+
+
+
+    # -------------------------
+    # Load ASN list
+    # -------------------------
 
     with open(
         ASN_FILE,
@@ -224,7 +283,9 @@ def main():
 
 
 
-    # Collect CIDRs
+    # -------------------------
+    # Get CIDRs from ASNs
+    # -------------------------
 
     all_prefixes = set()
 
@@ -257,14 +318,15 @@ def main():
 
         except Exception as e:
 
-
             print(
                 f"{asn} failed: {e}"
             )
 
 
 
+    # -------------------------
     # Sort CIDRs
+    # -------------------------
 
     sorted_prefixes = sorted(
         all_prefixes,
@@ -273,7 +335,9 @@ def main():
 
 
 
-    # Write master list
+    # -------------------------
+    # Write master CIDR file
+    # -------------------------
 
     with open(
         ALL_CIDR_FILE,
@@ -288,6 +352,7 @@ def main():
             )
 
 
+
     print(
         f"Wrote {ALL_CIDR_FILE}"
     )
@@ -299,7 +364,9 @@ def main():
 
 
 
-    # Split ALL CIDRs
+    # -------------------------
+    # Write chunks
+    # -------------------------
 
     write_chunks(
         sorted_prefixes
@@ -308,12 +375,12 @@ def main():
 
 
     # -------------------------
-    # Country Checks
+    # IPinfo Country Checks
     # -------------------------
 
     print()
     print(
-        "Starting IPinfo batch country lookups..."
+        "Starting IPinfo batch lookups..."
     )
     print()
 
@@ -324,42 +391,53 @@ def main():
 
     ip_to_cidr = {}
 
+
     ips = []
 
 
 
     for cidr in sorted_prefixes:
 
+
         ip = cidr_to_ip(
             cidr
         )
 
+
         ips.append(
             ip
         )
+
 
         ip_to_cidr[ip] = cidr
 
 
 
     total_batches = (
-        len(ips) + BATCH_SIZE - 1
+
+        len(ips)
+        + BATCH_SIZE
+        - 1
+
     ) // BATCH_SIZE
 
 
 
     for batch_number, start in enumerate(
+
         range(
             0,
             len(ips),
             BATCH_SIZE
         ),
+
         start=1
+
     ):
 
 
         batch = ips[
-            start:start+BATCH_SIZE
+            start:start + BATCH_SIZE
         ]
 
 
@@ -367,6 +445,7 @@ def main():
             f"Batch {batch_number}/{total_batches} "
             f"({len(batch)} IPs)"
         )
+
 
 
         results = get_countries_batch(
@@ -394,6 +473,41 @@ def main():
             )
 
 
+
+            old_country = None
+
+
+            if cidr in cache:
+
+                old_country = cache[cidr].get(
+                    "country"
+                )
+
+
+
+            if old_country != country:
+
+                print(
+                    f"CHANGE {cidr}: "
+                    f"{old_country} -> {country}"
+                )
+
+
+
+            # Update cache every run
+
+            cache[cidr] = {
+
+                "country": country,
+
+                "checked": time.strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
+
+            }
+
+
+
             if country == "US":
 
                 us_prefixes.append(
@@ -402,15 +516,37 @@ def main():
 
 
 
-        time.sleep(
-            1
-        )
+        # small pause between batches
+
+        time.sleep(1)
 
 
 
     # -------------------------
-    # Write US CIDRs
+    # Save updated cache
     # -------------------------
+
+    save_cache(
+        cache
+    )
+
+
+    print(
+        f"Saved {len(cache)} cache records"
+    )
+
+
+
+    # -------------------------
+    # Write US CIDR list
+    # -------------------------
+
+    us_prefixes = sorted(
+        us_prefixes,
+        key=cidr_key
+    )
+
+
 
     with open(
         US_CIDR_FILE,
@@ -418,10 +554,7 @@ def main():
     ) as f:
 
 
-        for cidr in sorted(
-            us_prefixes,
-            key=cidr_key
-        ):
+        for cidr in us_prefixes:
 
             f.write(
                 cidr + "\n"
@@ -434,13 +567,16 @@ def main():
         "=============================="
     )
 
+
     print(
         f"Wrote {US_CIDR_FILE}"
     )
 
+
     print(
         f"US CIDRs: {len(us_prefixes)}"
     )
+
 
     print(
         "=============================="
