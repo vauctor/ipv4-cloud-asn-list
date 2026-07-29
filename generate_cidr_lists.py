@@ -7,7 +7,7 @@ import os
 
 ASN_FILE = "asn.txt"
 OUTPUT_DIR = "output"
-IPINFO_TOKEN = "10a5b4beb4f0ae"
+IPINFO_TOKEN = os.environ.get("IPINFO_TOKEN")
 
 ALL_CIDR_FILE = os.path.join(
     OUTPUT_DIR,
